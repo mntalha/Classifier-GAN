@@ -15,10 +15,10 @@ import os
 
 num_workers = 8
 epoch_number = 5
-learning_rate = 3e-4
+learning_rate = 0.0002
 weight_decay = 3e-6
 model_name = None
-pretrained = False 
+pretrained = True 
 
 #paths on server
 path = "/data/mnk7465/2-ebsd/"

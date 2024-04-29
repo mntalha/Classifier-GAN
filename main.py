@@ -10,8 +10,6 @@ batch_size = 128
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-pretrained = True 
-
 print("STARTED ....")
 from gan_model import Generator
 
