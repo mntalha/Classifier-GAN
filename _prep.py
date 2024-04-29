@@ -18,7 +18,7 @@ epoch_number = 5
 learning_rate = 0.0002
 weight_decay = 3e-6
 model_name = None
-pretrained = True 
+pretrained = False 
 
 #paths on server
 path = "/data/mnk7465/2-ebsd/"
