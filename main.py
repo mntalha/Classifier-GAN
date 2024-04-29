@@ -31,7 +31,8 @@ import torch.optim as optim
 disc_optimizer = optim.Adam(
                         params = disc_model.parameters(),
                         lr = learning_rate,
-                        weight_decay = weight_decay
+                        betas= (0.5, 0.999),
+                        weight_decay = weight_decay,
                         )
 
     
@@ -49,23 +50,25 @@ gen_model = Generator(latent_dim, image_size=224, channels=3) #Generator
 gen_optimizer = optim.Adam(
                         params = gen_model.parameters(),
                        lr=0.002,
-                        betas= (0.5, 0.999)
+                        betas= (0.5, 0.999),
+                        weight_decay = weight_decay,
                         )
 gen_model.to(device_)
+
 
 def log_sum_exp(x, axis = 1):
     m = torch.max(x, dim = 1)[0]
     return m + torch.log(torch.sum(torch.exp(x - m.unsqueeze(1)), dim = axis))
 
-# def weights_init(m):
-#     classname = m.__class__.__name__
-#     if classname.find('Conv') != -1:
-#         nn.init.normal_(m.weight.data, 0.0, 0.02)
-#     elif classname.find('BatchNorm') != -1:
-#         nn.init.normal_(m.weight.data, 1.0, 0.02)
-#         nn.init.constant_(m.bias.data, 0)
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
         
-# gen_model.apply(weights_init)
+gen_model.apply(weights_init)
 
 def custom_activation(x):
     exp_x = torch.exp(x)
@@ -146,23 +149,23 @@ def train(gen_model, disc_model, latent_dim, n_epochs=20, n_batch=120):
         disc_optimizer.zero_grad()
         
 
-        y_pred_sup = disc_model(Xsup_real)[0][:,:len(classes)]
-        xloss = disc_sup_criteria(y_pred_sup, ysup_real)     
-        xloss.backward()
+        # y_pred_sup = disc_model(Xsup_real)[0][:,:len(classes)]
+        # xloss = disc_sup_criteria(y_pred_sup, ysup_real)     
+        # xloss.backward()
         
         # train on real. 
         [X_real, _], y_real = generate_real_samples([X_sup, y_sup], half_batch)
         y_pred_unsup = disc_model(X_real)[0][:,len(classes):]
-        y_pred_unsup = custom_activation(y_pred_unsup)
-        yloss = disc_unsup_criteria(y_pred_unsup, y_real)
+        #y_pred_unsup = custom_activation(y_pred_unsup)
+        yloss = disc_unsup_criteria(torch.sigmoid(y_pred_unsup), y_real) 
         yloss.backward()
         
         
         #Now train on fake. 
         X_fake, y_fake = generate_fake_samples(gen_model, latent_dim, half_batch)
         y_pred_unsup = disc_model(X_fake.detach())[0][:,len(classes):]
-        y_pred_unsup = custom_activation(y_pred_unsup)
-        zloss = disc_unsup_criteria(y_pred_unsup, y_fake)
+        #y_pred_unsup = custom_activation(y_pred_unsup)
+        zloss = disc_unsup_criteria(torch.sigmoid(y_pred_unsup), y_fake)
         zloss.backward()
         
         disc_optimizer.step()    
@@ -176,19 +179,20 @@ def train(gen_model, disc_model, latent_dim, n_epochs=20, n_batch=120):
         #X_predicted = gen_model(X_gan)
 
         y_predicted = disc_model(X_fake)[0][:,len(classes):]        
-        y_predicted = custom_activation(y_predicted)
-        qloss = disc_unsup_criteria(y_gan, y_predicted)
+        #y_predicted = custom_activation(y_predicted)
+        qloss = bce_loss(y_gan, y_predicted)
         qloss.backward()
         
         gen_optimizer.step()
     
-        _, prediction = torch.max(y_pred_sup, dim=1)
-        correct_tensor = prediction.eq(ysup_real.data.view_as(prediction))
-        accuracy = torch.mean(correct_tensor.type(torch.FloatTensor))
+        # _, prediction = torch.max(y_pred_sup, dim=1)
+        # correct_tensor = prediction.eq(ysup_real.data.view_as(prediction))
+        # accuracy = torch.mean(correct_tensor.type(torch.FloatTensor))
         
         
 		# summarize loss on this batch
-        print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, xloss, accuracy.item()*100, yloss, zloss, qloss))
+        # print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, xloss, accuracy.item()*100, yloss, zloss, qloss))
+        print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, 0, 0, yloss, zloss, qloss))
 
 
 
