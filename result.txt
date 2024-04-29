@@ -142,4 +142,4 @@ n_epochs=5, n_batch=128, 1/2=64, b/e=28, steps=140
 >140, c[0.669,65], d[0.010,0.028], g[5.064]
 TEST STARTED .... 
 Test Loss: 0.809746 
-Test Acc: 0.688417 
+Test Acc: 0.6884170 
