@@ -14,7 +14,7 @@ import os
 
 
 num_workers = 8
-epoch_number = 10
+epoch_number = 5
 learning_rate = 3e-4
 weight_decay = 3e-6
 model_name = None

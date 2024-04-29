@@ -1,4 +1,8 @@
-
+import numpy as np
+from numpy import expand_dims, zeros, ones, asarray
+from numpy.random import randn, randint
+import torchvision.utils as vutils
+import matplotlib.pyplot as plt
 
 latent_dim = 100 
 num_clss = 6 
@@ -23,13 +27,13 @@ from EBSDDataset import call_dataloader, call_whole_dataloader, call_partial_dat
 train_loader, test_loader,  validation_loader, classes = call_dataloader(path = path_dataset, batch_size = batch_size)
 
 from models import get_models, count_parameters
-disc_model = get_models("nvidia", pretrained)
-disc_model.classifier = nn.Linear(in_features=256, out_features=num_clss+1, bias=True) # 1 for the unsupervised   
+netD = get_models("nvidia", pretrained)
+netD.classifier = nn.Linear(in_features=256, out_features=num_clss+1, bias=True) # 1 for the unsupervised   
 
 import torch.optim as optim
 
-disc_optimizer = optim.Adam(
-                        params = disc_model.parameters(),
+optimizerD = optim.Adam(
+                        params = netD.parameters(),
                         lr = learning_rate,
                         betas= (0.5, 0.999),
                         weight_decay = weight_decay,
@@ -40,20 +44,20 @@ disc_optimizer = optim.Adam(
 disc_sup_criteria = nn.CrossEntropyLoss()
 disc_unsup_criteria = nn.BCELoss() #Binary Cross entropy
 
-disc_model.to(device_)
+netD.to(device_)
 
-gen_model = Generator(latent_dim, image_size=224, channels=3) #Generator
-
-
+netG = Generator(latent_dim, image_size=224, channels=3) #Generator
 
 
-gen_optimizer = optim.Adam(
-                        params = gen_model.parameters(),
-                       lr=0.002,
+
+
+optimizerG = optim.Adam(
+                        params = netG.parameters(),
+                        lr= learning_rate,
                         betas= (0.5, 0.999),
                         weight_decay = weight_decay,
                         )
-gen_model.to(device_)
+netG.to(device_)
 
 
 def log_sum_exp(x, axis = 1):
@@ -68,17 +72,16 @@ def weights_init(m):
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
         
-gen_model.apply(weights_init)
+netG.apply(weights_init)
+#netD.apply(weights_init)
 
-def custom_activation(x):
-    exp_x = torch.exp(x)
-    Z_x = torch.sum(exp_x, dim=-1, keepdim=True)
-    D_x = Z_x / (Z_x + 1)
-    return D_x
+# def custom_activation(x):
+#     exp_x = torch.exp(x)
+#     Z_x = torch.sum(exp_x, dim=-1, keepdim=True)
+#     D_x = Z_x / (Z_x + 1)
+#     return D_x
 
-import numpy as np
-from numpy import expand_dims, zeros, ones, asarray
-from numpy.random import randn, randint
+
 
 def generate_real_samples(dataset, n_samples):
     images, labels = dataset
@@ -123,7 +126,7 @@ def bce_loss(input, target):
     loss = input.clamp(min=0) - input * target + (1 + neg_abs.exp()).log()
     return loss.mean()
 
-def train(gen_model, disc_model, latent_dim, n_epochs=20, n_batch=120):
+def train(netG, netD, latent_dim, n_epochs=20, n_batch=120):
 	
     bat_per_epo = int(len(train_loader.dataset) / n_batch)
 	# iterations
@@ -141,65 +144,76 @@ def train(gen_model, disc_model, latent_dim, n_epochs=20, n_batch=120):
         #will be the real class labels for MNIST. (NOT 1 or 0 indicating real or fake.)
         X_sup, y_sup = next(iter(train_loader))
 
-        [Xsup_real, ysup_real], _ = generate_real_samples([X_sup, y_sup], half_batch)
+        [Xsup_real, ysup_real], _ = generate_real_samples([X_sup, y_sup], n_batch)
          
         #DISCRIMINATOR 
         
         # disc_model.train()
-        disc_optimizer.zero_grad()
+        optimizerD.zero_grad()
         
 
-        # y_pred_sup = disc_model(Xsup_real)[0][:,:len(classes)]
-        # xloss = disc_sup_criteria(y_pred_sup, ysup_real)     
-        # xloss.backward()
+        y_pred_sup = netD(Xsup_real)[0][:,:len(classes)]
+        xloss = disc_sup_criteria(y_pred_sup, ysup_real)     
+        xloss.backward()
         
         # train on real. 
-        [X_real, _], y_real = generate_real_samples([X_sup, y_sup], half_batch)
-        y_pred_unsup = disc_model(X_real)[0][:,len(classes):]
+        [X_real, _], y_real = generate_real_samples([X_sup, y_sup], n_batch)
+        y_pred_unsup = netD(X_real)[0][:,len(classes):]
         #y_pred_unsup = custom_activation(y_pred_unsup)
         yloss = disc_unsup_criteria(torch.sigmoid(y_pred_unsup), y_real) 
         yloss.backward()
         
         
         #Now train on fake. 
-        X_fake, y_fake = generate_fake_samples(gen_model, latent_dim, half_batch)
-        y_pred_unsup = disc_model(X_fake.detach())[0][:,len(classes):]
+        noise = generate_latent_points(latent_dim, n_batch)
+        X_fake = netG(noise)
+	    # create class labels
+        y_fake = torch.zeros((n_batch, 1)).to(device_)
+
+        y_pred_unsup = netD(X_fake.detach())[0][:,len(classes):]
         #y_pred_unsup = custom_activation(y_pred_unsup)
         zloss = disc_unsup_criteria(torch.sigmoid(y_pred_unsup), y_fake)
         zloss.backward()
         
-        disc_optimizer.step()    
+        optimizerD.step()    
         
         
         #GENERATOR 
         #gen_model.train()
-        gen_optimizer.zero_grad()
+        optimizerG.zero_grad()
         
-        X_gan, y_gan = generate_latent_points(latent_dim, n_batch), torch.ones((n_batch//2, 1)).to(device_)
+        X_gan, y_gan = generate_latent_points(latent_dim, n_batch), torch.ones((n_batch, 1)).to(device_)
         #X_predicted = gen_model(X_gan)
 
-        y_predicted = disc_model(X_fake)[0][:,len(classes):]        
+        y_predicted = netD(X_fake)[0][:,len(classes):]        
         #y_predicted = custom_activation(y_predicted)
         qloss = bce_loss(y_gan, y_predicted)
         qloss.backward()
         
-        gen_optimizer.step()
+        optimizerG.step()
     
-        # _, prediction = torch.max(y_pred_sup, dim=1)
-        # correct_tensor = prediction.eq(ysup_real.data.view_as(prediction))
-        # accuracy = torch.mean(correct_tensor.type(torch.FloatTensor))
+        _, prediction = torch.max(y_pred_sup, dim=1)
+        correct_tensor = prediction.eq(ysup_real.data.view_as(prediction))
+        accuracy = torch.mean(correct_tensor.type(torch.FloatTensor))
         
         
 		# summarize loss on this batch
-        # print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, xloss, accuracy.item()*100, yloss, zloss, qloss))
-        print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, 0, 0, yloss, zloss, qloss))
+        print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, xloss, accuracy.item()*100, yloss, zloss, qloss))
+        # print('>%d, c[%.3f,%.0f], d[%.3f,%.3f], g[%.3f]' % (i+1, 0, 0, yloss, zloss, qloss))
 
 
+#get original images 
 
-train(gen_model, disc_model, latent_dim, n_epochs=epoch_number, n_batch= batch_size)
+real_batch = next(iter(train_loader))
+plt.figure(figsize=(8,8))
+plt.axis("off")
+plt.title("Training Images")
+plt.imsave("Original.jpg", np.transpose(vutils.make_grid(real_batch[0].to(device)[:32], padding=2, normalize=True).cpu().numpy(),(1,2,0)))
 
-save_pytorch_model(gen_model, "gen_model", path_trained_models)
-save_pytorch_model(disc_model, "disc_model", path_trained_models)
+train(netG, netD, latent_dim, n_epochs=epoch_number, n_batch= batch_size)
+
+save_pytorch_model(netG, "gen_model", path_trained_models)
+save_pytorch_model(netD, "disc_model", path_trained_models)
 
 def get_test_accuracy(model, model_name, test_loader, device, criteria, classes):
         
@@ -249,5 +263,12 @@ def get_test_accuracy(model, model_name, test_loader, device, criteria, classes)
         print('Test Loss: %f ' % (test_loss))
         print('Test Acc: %f ' % (test_acc))
 
-get_test_accuracy(disc_model, "nvidia", test_loader,  device_, disc_sup_criteria, classes)
+get_test_accuracy(netD, "nvidia", test_loader,  device_, disc_sup_criteria, classes)
 
+
+latents = generate_latent_points(latent_dim, 32)
+images = netG(latents)
+plt.figure(figsize=(8,8))
+plt.axis("off")
+plt.title("Fake Images")
+plt.imsave("Fake.jpg", np.transpose(vutils.make_grid(images.to(device)[:64], padding=2, normalize=True).cpu().numpy(),(1,2,0)))
